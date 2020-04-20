@@ -51,23 +51,17 @@ You will be marked on the basis of your choice and use of appropriate diagnostic
 ```{r include = FALSE}
 ts <- fread('data/mysterytsUW.txt') %>% mutate(month = rep(month.name, 9)[1:100], year = floor(0:99/12), date = str_c(month, '-', year), row = 1:100) %>% pivot_longer(names_to = 'series', cols = 1:18, values_to = 'value')
 
-ts %>% ggplot(aes(row, value))+
-  geom_line()+
-  facet_wrap(~series, scales = 'free')
-
-
-walk(unique(ts$series), function(x) acf(ts %>% filter(series == x) %>% pull(value)))
 ```
 
-Deterministic trends in c, k, n, p, possibly o and r. 
 
 ```{r figure 1}
 focal_series = ts %>% filter(series == 'a')
-acf(focal_series$value, main = "Figure 1: CF of Series 'A'")
+acf(focal_series$value, main = "Figure 1: ACF of Series 'A'")
+pacf(focal_series$value, main = "Figure 2: PACF of Series 'A'")
+m <- arima(focal_series$value, order = c(0,2,0))
 ```
 
-a. No temporal autocorrelation, moving average, deterministic trend, or seasonality. While the acf (figure 1) and pacf show a negative and significant spike in the second order. At first I thought that could mean that either the spike was spurious or we had an ACF(2) with a very low $\phi_1$  and a $phi_2$ of about .45. But when I tried simulating that data with that structure, the ACF plot looked very different: there was always a significant first order spike. I even tried making $\phi_1$  really low and $\phi_2$ really high, but no dice. So i'm convinced that A is just error around the mean in which the data from two periods ago happens to be negatively associated with the current data. Eyballing the plot and ACF also seemed to rule out deterministic trends and seasonality. Running a regression with the observation# and month as variables showed they were not good predictors of the value.
-
+a. Series A looks like a MA(2) process with a small first order $\rho$, which may be positive, and a negative second-order $\rho$. I looked at the acf and pcf plots, figures 1 and 2 respectively, and was initially confused, becasue they didn't look like anything I had seen. But then I played around with the simulation code from class and realized that I could produce a similar PACF by making a second-order MA process.
 
 b. Eyeballing B suggests some seasonality. The PACF and ACF both also have spikes on 12, which supports that intuition. Regression of the monthly values on the observation number and month further confirms this pattern: looks like something big happens in December.  
 
@@ -100,10 +94,86 @@ acf(focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% pull(
      main = "Figure 4: ACF of Seasonality-Adjusted 'D'")
 ```
 
+g. This looks like a AR(1) process with $\phi$ up around .8. This is based on an ACF with steady declines after the first lag and a PACF with only the first lag significant. Because the ACF looked different than examples of AR(1), I checked for seasonality and deterministic trends but couldn't find them. 
+
+h. This is a MA(1) processs with MA(1) roughly equal to .5. The ACF shows a single significant value at lag one, while the PACF shows a second, opposite signed value at lag two. This is consistent with an MA process. No evidence of seasonality or deterministic trends.
+
+i. There is no time-series process in i. Looking at ACF, PACF, regressing on the time or the period, all come up with no results. It's all shock here.
+
+j. This has monthly seasonality with strong effects for all months. ACF and PACF have strong spikes at lag 12, and regressing on month dummies is significant. Figure 5 shows original and with seasonality removed.
+
+```{r}
+focal_series = ts %>% filter(series == 'j')
+trend_model = lm(value ~ row + month, data = focal_series)
+focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% 
+  pivot_longer(c(detrend, value), values_to = 'value') %>%
+  ggplot(aes(row, value, color = name))+
+  geom_line() + 
+  scale_color_brewer(palette = 10)+
+  ggtitle("Figure 5: Original and de-seasoned Series 'J'") +
+  theme_classic()
+```
+
+k. This has a clear deterministic trend. Looks like one with my eyes, regression on time confirms. Removing the deterministic trend produces ACF and PACF with no evidence of autocorrelation.
+
+
+l. This looks like an AR(1) with a $\phi$ of about .9. If it were any higher, I'd be tempted to say that it might also be a RW(1), but the instructions don't allow for that, and it's not much higher than .9.
+
+m. OK, now we might see two things!
+Seasonality and MA(1)
+First, there's some clear seasonality. ACF and PCF have significant spikes at 12, and regression on month dummies shows signiifcant month-specific intercpets. After removing those, as seen in figure 6, we can take the ACF and PACF, shown in figure 7, which look like an MA(1) process with $\ro_1$ at around .5.
+
+```{r}
+focal_series = ts %>% filter(series == 'm')
+trend_model = lm(value ~ row + month, data = focal_series)
+focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% 
+  pivot_longer(c(detrend, value), values_to = 'value') %>%
+  ggplot(aes(row, value, color = name))+
+  geom_line() + 
+  scale_color_brewer(palette = 10)+
+  ggtitle("Figure 6: Original and Seasonality-Adjusted Series 'M'") +
+  theme_classic()
+pacf(focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% pull(detrend),
+     main = "Figure 7: PACF of Seasonality-Adjusted 'M'")
+```
+
+n. Deterministing trend with AR(1) after de-trending. Trend looked likely in a plot, confirmed with decompose and regression. After detrending ACF and PACF showed evidence of AR(1) with declining ACF spikes and single PACF spike.
+
+o. There is both a monthly seasonality and a deterministic trend here, identified with `decompose` and regression. After both are removed using the regression results, ACF and PACF show no significant spikes. 
+
+p. This is monthly-seasonal, with a deterministic trend recognized and removed as in O, and an AR(1) process after detrending and removing seasonality. 
+
+q. This shows some evidence for seasonality in the decompose and when using regression. However, adjusting the time series for seasonality doesn't seem to have much effect, so if it's there its weak and I'm going to say I don't think there's seasonality. Further evidence agianst seasonality is the lack of a spike at 12 on the ACF and PACF (thought there is a spike at 13, I think that's spurious). Instead, looking at the ACF and PACF suggests to me that this is an AR(2) with relatively small $\phi_1$ and $phi_2$, right above and below .3 respectively.
+
+
+
+
+
+# Problem 2: Identifying unknown, possibly nonstationary time series processes  
+
+
+**[15 points.]** In this problem, we focus on the problem of identifying nonstationarity. In the file `mysterytsUW2.csv`, you will find five additional time series, s. to w. Once again, each column is an independent time series generated to have a particular structure. All of these series follow some AR(p) process. No moving average processes, deterministic trends, or seasonal variation are present in these time series. However, these five time series are not guaranteed to be covariance stationary. For each time series:  
+
+```{r}
+ts %>% filter(row<21) %>% ggplot(aes(row, value))+
+  geom_line()+
+  facet_wrap(~series, scales = 'free')
+
+
+walk(unique(ts$series), function(x) acf(ts %>% filter(series == x, row<21) %>% pull(value)))
+```
+
+
+i. Subset the first 20 observations. Plot them against time and plot the ACFs and PACFs. (There is no need to show these graphs on your write-up.) Based on these plots, guess the order of the AR(p), and the approximate values of the au- toregressive parameters.
+
+
+ii. Subset the first 100 observations and repeat the analysis. Did any of your con- clusions change or become more or less certain?  
+
+iii. Conduct your analysis on all 1000 observations. Did any of your conclusions change? If so, what implications does this have for assessing stationarity in time series in your field?  
 
 ```{r include = FALSE}
 
-focal_series = ts %>% filter(series == 'f')
+focal_series = ts %>% filter(series == 'q')
 focal.ts <- ts(focal_series$value, start=c(2010,1), frequency=12)
 plot(decompose(focal.ts))
 summary(lm(value ~ row + month, data = focal_series #%>%  mutate(month = as.numeric(as_factor(month)))
@@ -120,28 +190,19 @@ focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>%
   ggplot(aes(row, value, color = name))+
   geom_line() + 
   scale_color_brewer(palette = 10)+
-  ggtitle("Figure 2: Original and Detrened Series 'C'") +
+  ggtitle("Figure 2: Original and Detrened Series 'Cj'") +
   theme_classic()
 acf(focal_series$value,
      main = "Figure 3: ACF of 'D'")
+pacf(focal_series$value,
+     main = "Figure 3: ACF of 'D'")
 acf(focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% pull(detrend),
      main = "Figure 4: ACF of Seasonality-Adjusted 'D'")
-pacf(focal_series$value)
+pacf(focal_series %>% mutate(detrend = value-trend_model$fitted.values) %>% pull(detrend),
+     main = "Figure 4: ACF of Seasonality-Adjusted 'D'")
+#Set the intercept
 summary(lm(value ~ row + month, data = focal_series))
 ```
-
-
-
-# Problem 2: Identifying unknown, possibly nonstationary time series processes  
-
-
-**[15 points.]** In this problem, we focus on the problem of identifying nonstationarity. In the file `mysterytsUW2.csv`, you will find five additional time series, s. to w. Once again, each column is an independent time series generated to have a particular structure. All of these series follow some AR(p) process. No moving average processes, deterministic trends, or seasonal variation are present in these time series. However, these five time series are not guaranteed to be covariance stationary. For each time series:  
-
-i. Subset the first 20 observations. Plot them against time and plot the ACFs and PACFs. (There is no need to show these graphs on your write-up.) Based on these plots, guess the order of the AR(p), and the approximate values of the au- toregressive parameters.  
-
-ii. Subset the first 100 observations and repeat the analysis. Did any of your con- clusions change or become more or less certain?  
-
-iii. Conduct your analysis on all 1000 observations. Did any of your conclusions change? If so, what implications does this have for assessing stationarity in time series in your field?  
 
 
 # Problem 3: Student project checkpoint
