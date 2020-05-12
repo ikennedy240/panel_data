@@ -28,6 +28,8 @@ library(xtable)
 library(tidyverse)
 library(bookdown)
 library(data.table)
+library(huxtable)
+library(forecast)
 ```
 
 Collaborators:  Devin Collins, Mark Igra, Ramin Jabbarli, and Hannah Lee
@@ -40,8 +42,7 @@ for election in November of even-numbered years to seat the Congress that will
 serve in the following two years. Thus, the 2016 election determined the 435 members of the House for the 115th Congress, serving from 2017–2018.  
 
 We  will  study  the  evolution  of  the  time  series  of  the  number  of  
-seats  won  by Democrats (or by independents who caucus with the Democratic Party) in each election held from 1963 to 2016 (a total of 28 observations). As substantive 
-interest focuses on the party in control and the size of their majority, we will focus our analysis on these outcomes, where positive values indicate the size of a Democratic majority and negative values the size of a Republican majority.
+seats  won  by Democrats (or by independents who caucus with the Democratic Party) in each election held from 1963 to 2016 (a total of 28 observations). As substantive interest focuses on the party in control and the size of their majority, we will focus our analysis on these outcomes, where positive values indicate the size of a Democratic majority and negative values the size of a Republican majority.
 
 
 Variable | Description
@@ -68,14 +69,13 @@ are taken from the Bureau of Labor Statistics (unemployment) and Wikipedia (all 
 We will also consider three possible inﬂuences on the size of the Democratic 
 majority.  First, when one party sweeps the other party out of the presidency, they 
 tend to bring in a wave of co-partisans to Congress who are “clinging to the 
-president’s coattails.” Second, the party of the president tends to do badly in midterm elections (those that do not involve a presidential election; e.g., 2010, 2014, and 2018).  The usual explanation is that voters frustrated with the president cannot replace him, but can only offset his power with opposition in Congress.[^1]   Third, in all elections, voters tend to attribute economic performance to the party of the president.  For example, keeping unemployment below its long term average should help the president’s party at the expense of the opposition, and vice versa when unemployment is higher than usual.  
+president’s coattails.” Second, the party of the president tends to do badly in midterm elections (those that do not involve a presidential election; e.g., 2010, 2014, and 2018).  The usual explanation is that voters frustrated with the president cannot replace him, but can only offset his power with opposition in Congress.[^1] Third, in all elections, voters tend to attribute economic performance to the party of the president.  For example, keeping unemployment below its long term average should help the president’s party at the expense of the opposition, and vice versa when unemployment is higher than usual.  
 
 [^1]: More subtle theories exist; see Alberto Alesina and Howard Rosenthal, 1995, 
 *Partisan Politics, Divided Government, and the Economy*, Cambridge University Press.  
 
 
-These three explanations leave a lot out: for example, changes in the use of 
-redistricting for partisan advantage, in the partisan composition of the electorate, and especially the transition of the Southern Democrats to the Republican Party. Because incumbency provides a strong advantage to sitting members of Congress, arguably many of these changes did not act gradually, but with a “bang” when a sudden shock caused many incumbents to lose or retire.  The shock in question is the 1994 midterm election; to account for the possibility it reﬂects a “structural break” in the level of the time series, we will also consider a control for whether our observations come before or after this watershed.  
+These three explanations leave a lot out: for example, changes in the use of redistricting for partisan advantage, in the partisan composition of the electorate, and especially the transition of the Southern Democrats to the Republican Party. Because incumbency provides a strong advantage to sitting members of Congress, arguably many of these changes did not act gradually, but with a “bang” when a sudden shock caused many incumbents to lose or retire.  The shock in question is the 1994 midterm election; to account for the possibility it reﬂects a “structural break” in the level of the time series, we will also consider a control for whether our observations come before or after this watershed.  
 
 In the ﬁle congress.csv, you will ﬁnd the variables described in Table 1. Examine the
 data ﬁle, and note well the behavior of these variables over time. Then work 
@@ -90,11 +90,81 @@ series, ACF, and PACF plots. If 1994 represents a “structural break” in the
 level of the Democratic majority, what effect does that have on your diagnosis of the
 behavior of the time series?  
 
+```{r load data}
+congress <- read_csv('data/congress.txt')
+```
+
+```{r 1a}
+# dicky fuler and phillips-peron
+ 
+tseries::adf.test(congress$DemHouseMaj) 
+PP.test(congress$DemHouseMaj)
+
+congress %>% 
+  ggplot(aes(StartYear, DemHouseMaj))+
+  geom_line()+
+  geom_hline(aes(yintercept = 0))+
+  ggtitle("Figure 1: Democratic House Majority 1963-2017")
+
+acf(congress.ts,
+     main = "Figure 2: ACF of DemHouseMaj")
+pacf(congress.ts,
+     main = "Figure 3: ACF of DemHouseMaj")
+
+# demean before and after break
+congress <- congress %>% 
+  group_by(StartYear>1994) %>% 
+  mutate(prepostmean = mean(DemHouseMaj), demeanedDHM = DemHouseMaj - prepostmean) %>% ungroup()
+
+congress %>% 
+  ggplot(aes(StartYear, demeanedDHM))+
+  geom_line()+
+  geom_hline(aes(yintercept = 0))+
+  ggtitle("Figure 4: Demeaned Democratic House Majority 1963-2017")
+
+acf(congress$demeanedDHM,
+     main = "Figure 5: ACF of Demeaned DemHouseMaj")
+pacf(congress$demeanedDHM,
+     main = "Figure 6: ACF of Demeaned DemHouseMaj")
+
+```
+  
+While the origianl timeseries seems to have an AR(1) process with $\rho = .7$ or so, demeaning using pre and post 1994 means seems to remove the temporal dependence. This seems to support the idea that the break in 1994 is important.
+
+
 b.  [10 points.] Fit an AR(0) regression to the time series `DemHouseMaj` controlling
 for the covariates PartisanMidterm, PartisanUnem, and Coattails, which test the
 three theories mentioned above.  Also control for Pre1994 to allow for a struc-
 tural break. Present the results in a table, being sure to note the 
 coefficients, their standard errors, the AIC for the entire model, the standard error of the regression, and the number of observations. Format the table nicely, as if for a paper, and describe what you have found substantively as well as you can.  
+
+```{r 1b}
+## Estimate an AR(1) using arima
+xcovariates <- congress %>% select(Pre1994, PartisanMidterm, PartisanUnem, Coattails) %>% as.matrix()
+congress_ar0 <- arima(ts(congress$DemHouseMaj, start = 1963, frequency = .5), 
+                      order = c(0,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+
+arima_model <- congress_ar1
+#How do we interpret these parameter estimates?
+arima_to_df <- function(arima_model){
+  tibble(
+    vars = names(arima_model$coef),
+    coefs = arima_model$coef,                 # parameter estimates (betas)
+    se = sqrt(diag(arima_model$var.coef)),    # standard errors
+    ll = ll,                                  # log likelihood at its maximum
+    sigma2hat = arima_model$sigma2,           # standard error of the regression
+    aic = aic,                                # Akaike Information Criterion  
+    rmse = sqrt(mean((arima_model$residuals)^2)) # rmse
+  )
+}
+
+huxreg(congress_ar1, coefs = names(congress_ar1$coef))
+
+```
+
 
 c.  [15 points.] Now ﬁt the following additional models and add them to the table
 you made in part b: (i.)  an AR(1) model; (ii.)  an AR(2) model; (iii.)  an 
@@ -102,11 +172,93 @@ MA(1) model; (iv.) an ARMA(1,1) model. Make sure to include the same four contro
 as   in part b.  Discuss the substantive and statistical similarities and differences
 across all ﬁve ﬁtted models.
 
+```{r}
+congress_ar1 <- arima(ts(congress$DemHouseMaj, start = 1963, frequency = .5), 
+                      order = c(1,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_ar2 <- arima(ts(congress$DemHouseMaj, start = 1963, frequency = .5), 
+                      order = c(2,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_ma1 <- arima(ts(congress$DemHouseMaj, start = 1963, frequency = .5), 
+                      order = c(0,0,1), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_arma <- stats::arima(congress$DemHouseMaj, 
+                      order = c(1,0,1), 
+                      xreg = xcovariates)
+
+huxreg(list("AR1" = congress_ar1, "AR2" = congress_ar2, "MA1" = congress_ma1, "ARMA" = congress_arma), coefs = names(congress_arma$coef), statistics = c("N"="nobs", "sigma", "AIC"))
+
+```
+
+
 d.  [10 points.] Perform a rolling-windows cross-validation of all ﬁve models 
 using a window of 20 periods and forecasting forward 3 periods.  Place in a table the
 following goodness of ﬁt statistics for all ﬁve models: AIC, in-sample root mean
 squared error, and the cross-validation mean absolute error (MAE) up to 1, 2, and 3 periods ahead, respectively, as well as the average of these threecross-validation
 MAEs. Based on these statistics, select a ﬁnal “best” model.
+
+```{r 1d}
+arimaCV <- function(x, order, xreg, include.mean = TRUE, forward=NULL, minper=NULL) {
+  require(forecast) # use package forecast
+  xreg = ts(xreg)
+  if (!any(class(x)=="ts")) x <- ts(x) # automatically change inputs to ts
+  n <- length(x) # the number of observations
+  mae <- matrix(NA, nrow=n-minper, ncol=forward) # mean standard error matrix
+  st <- tsp(x)[1]+(minper-2) # ts attribute function
+  for(i in 1:(n-minper)) {
+    xshort <- window(x, start=st+(i-minper+1), end=st+i)
+    xnext <- window(x, start=st+(i+1), end=min(n, st+(i+forward)))
+    xregshort <- window(xreg, start=st+(i-minper+1), end=st+i)
+    xregnext <- window(xreg, start=st+(i+1), end=min(n, st+(i+forward)))
+    fit <- Arima(xshort, order=order, xreg=xregshort, include.mean=include.mean)
+    fcast <- forecast(fit, h=length(xnext), xreg=xregnext)
+    mae[i,1:length(xnext)] <- abs(fcast[['mean']]-xnext)
+  } # calculating MAEs from the first period to kth period forward using all window lengths
+  # e.g. 1~170, 2~171, 3~172, 4~173 , ..... per all kth period foward
+  colMeans(mae, na.rm=TRUE) # averaging the MAE per each period forward
+}
+
+# Set rolling window length and look ahead period for cross-validation
+minper <- 20 # minimum window- 170th observation has a seat belt law finally!
+forward <- 3 # 1~12th period forward after 170th observation!
+x <- congress$DemHouseMaj
+congress_ar1 <- arimaCV(congress$DemHouseMaj, 
+                      order = c(1,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE, forward, minper)
+
+congress_ar2 <- arimaCV(congress$DemHouseMaj, 
+                      order = c(2,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE, forward, minper)
+
+congress_ma1 <- arimaCV(congress$DemHouseMaj, 
+                      order = c(0,0,1), 
+                      xreg = xcovariates,
+                      include.mean = TRUE, forward, minper)
+
+congress_arma <- arimaCV(congress$DemHouseMaj, 
+                      order = c(1,0,1), 
+                      xreg = xcovariates,
+                      include.mean = TRUE, forward, minper)
+
+tibble(
+  forcast_distance = c(as.character(1:3), 'average'),
+  ar1 = c(congress_ar1, mean(congress_ar1)),
+  ar2 = c(congress_ar2, mean(congress_ar2)),
+  ma1 = c(congress_ma1, mean(congress_ma1)),
+  arma = c(congress_arma, mean(congress_arma))
+) %>% knitr::kable()
+
+```
+
+Based on CV it looks like AR2 is tops
 
 e.  [25 points.] Using the model you selected in part d., forecast what will 
 happen to the size of the Democratic majority in the US House in the 2018, 2020, and
@@ -128,6 +280,117 @@ Describe the substantive impact of your forecast results in as much detail as yo
 feel comfortable, as well as how much conﬁdence we should have in the forecasts.  
 
 NB: As a check on your work, for each scenario and year also report the table of counterfactual covariate values you used to make your forecasts. Be very careful when constructing these values to capture to logic of the covariates; each one is tricky in its own way. To carry out the forecasts, you may use either predict() or the simcf library’s ldvsimev().  
+
+PartisanMidterm | 1 for midterms in which the Democrats hold the presidency, -1 for midterms in which there is a Republican president, and 0 in presidential elections
+Unemployment | the monthly unemployment rate at the time of the election of this session of Congress
+UnemDeviation | the difference between pre-election unemployment and mean unemployment, 1963–2016 (which was 6.075%)
+Coattails | 1 if the presidency shifted to the Democrats on election day, 1 if the presidency shifted to the Republicans, and 0 if the party of the president was unchanged
+PartisanMidterm | 1 for midterms in which the Democrats hold the presidency, 1 for midterms in which there is a Republican president, and 0 in presidential elections
+PartisanUnem | equal to UnemDeviation when a Democrat is president, and to −1× UnemDeviation when a Republican is president  
+
+```{r}
+library(simcf)
+
+model <- arima(congress$DemHouseMaj, 
+                      order = c(2,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+cfs_same <- tibble(
+  Pre1994 = c(0,0,0),
+  PartisanMidterm = c(-1,0,1),
+  PartisanUnem = c(1.475, 1.475, -1.475),
+  Coattails = c(0,1,0)
+)
+
+cfs_lower <- tibble(
+  Pre1994 = c(0,0,0),
+  PartisanMidterm = c(-1,0,1),
+  PartisanUnem = c(2.475, 2.475, -2.475),
+  Coattails = c(0,1,0)
+)
+
+cfs_higher <- tibble(
+  Pre1994 = c(0,0,0),
+  PartisanMidterm = c(-1,0,1),
+  PartisanUnem = c(.475, .475, -.475),
+  Coattails = c(0,1,0)
+)
+
+# Simulate predicted values
+sims <- 10000
+simparam <- MASS::mvrnorm(sims, model$coef, model$var.coef)
+
+simphi <- simparam[,1:2]
+simbetas <- simparam[,3:ncol(simparam)]
+y = congress$DemHouseMaj
+lagY <- c(y[length(y)],y[length(y)-1])
+lagY <- as.vector(lagY)
+lagEps <- c(model$resid[length(y)], model$resid[length(y)-1])
+lagEps <- as.vector(lagEps)
+sigma <- sqrt(model$sigma)
+
+xhyp <- cfs_same %>% as.matrix()
+simev <- ldvsimpv(xhyp,
+					simbetas,
+					ci=0.95,
+					constant=1,
+					phi=simphi,
+					lagY=lagY,
+					lagEps=lagEps,
+					sigma=sigma
+)
+cfs_same <- cfs_same %>% mutate(year = c(2018,2020,2022), 
+               condition = "Stays at 4.6",
+               pe = simev$pe,
+               lower = simev$lower,
+               upper = simev$upper
+               )
+
+
+xhyp <- cfs_lower %>% as.matrix()
+simev <- ldvsimpv(xhyp,
+					simbetas,
+					ci=0.95,
+					constant=1,
+					phi=simphi,
+					lagY=lagY,
+					lagEps=lagEps,
+					sigma=sigma
+)
+cfs_lower <- cfs_lower %>% mutate(year = c(2018,2020,2022), 
+               condition = "Lowers at 3.6",
+               pe = simev$pe,
+               lower = simev$lower,
+               upper = simev$upper
+               )
+
+xhyp <- cfs_higher %>% as.matrix()
+simev <- ldvsimpv(xhyp,
+					simbetas,
+					ci=0.95,
+					constant=1,
+					phi=simphi,
+					lagY=lagY,
+					lagEps=lagEps,
+					sigma=sigma
+)
+cfs_higher <- cfs_higher %>% mutate(year = c(2018,2020,2022), 
+               condition = "Rises at 5.6",
+               pe = simev$pe,
+               lower = simev$lower,
+               upper = simev$upper
+               )
+
+cfs <- bind_rows(cfs_same, cfs_lower, cfs_higher)
+ggplot(cfs, aes(year, pe))+
+  geom_line(aes(color = condition))
+  #geom_ribbon(aes(ymax = upper, ymin = lower, fill = condition), alpha = .2)
+
+
+knitr::kable(cfs %>% rename(Year = year, Condition = condition, Estimate = pe) %>% select(Year, Condition, everything()))
+```
+
  
 Problem 2: Analyzing US Senate seat shares using ARMA  
 
@@ -137,7 +400,85 @@ voting members serving staggered six-year terms. Roughly one-third of the seats 
 a.  [10 points.] Plot the time series DemSenateMaj and plot its ACF and PACF. 
 Perform augmented Dickey-Fuller and Phillips-Peron tests for unit roots.  Now “demean” the data by period, removing the pre-1994 mean from cases before 1994, and the post-1994 mean from cases after 1994. Make new time series, ACF, and PACF plots and compare your results. Diagnosis the time series, accounting for the possibility of a structural break.  
 
+
+```{r 2a}
+congress %>% 
+  ggplot(aes(StartYear, DemSenateMaj))+
+  geom_line()+
+  geom_hline(aes(yintercept = 0))+
+  ggtitle("Figure 1: Democratic House Majority 1963-2017")
+
+acf(congress.ts,
+     main = "Figure 2: ACF of DemSenateMaj")
+pacf(congress.ts,
+     main = "Figure 3: ACF of DemSenateMaj")
+
+# demean before and after break
+congress <- congress %>% 
+  group_by(StartYear>1994) %>% 
+  mutate(prepostmean = mean(DemSenateMaj), demeanedDSM = DemSenateMaj - prepostmean) %>% ungroup()
+
+congress %>% 
+  ggplot(aes(StartYear, demeanedDSM))+
+  geom_line()+
+  geom_hline(aes(yintercept = 0))+
+  ggtitle("Figure 4: Demeaned Democratic House Majority 1963-2017")
+
+acf(congress$demeanedDSM,
+     main = "Figure 5: ACF of Demeaned DemSenateMaj")
+pacf(congress$demeanedDSM,
+     main = "Figure 6: ACF of Demeaned DemSenateMaj")
+
+```
+
 b.  [10 points.]  Repurpose your code from Problem 1 to model the time series DemSenateMaj.  In particular, control for PartisanMidterm, PartisanUnem, Coattails, and Pre1994, and consider ﬁve models: an AR(0) model, an AR(1) model, an AR(2) model, an MA(1) model, and an ARMA(1,1) model. Recreate the two tables you made in Problem 1 (the table of coefficients and the table of goodness of ﬁt statistics) for the Senate data.  How do the substantive results compare to the House models?  
 
+
+```{r}
+
+xcovariates <- congress %>% select(Pre1994, PartisanMidterm, PartisanUnem, Coattails) %>% as.matrix()
+congress_ar0 <- arima(ts(congress$DemSenateMaj, start = 1963, frequency = .5), 
+                      order = c(0,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+
+congress_ar1 <- arima(ts(congress$DemSenateMaj, start = 1963, frequency = .5), 
+                      order = c(1,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_ar2 <- arima(ts(congress$DemSenateMaj, start = 1963, frequency = .5), 
+                      order = c(2,0,0), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_ma1 <- arima(ts(congress$DemSenateMaj, start = 1963, frequency = .5), 
+                      order = c(0,0,1), 
+                      xreg = xcovariates,
+                      include.mean = TRUE)
+
+congress_arma <- stats::arima(congress$DemSenateMaj, 
+                      order = c(1,0,1), 
+                      xreg = xcovariates)
+
+huxreg(list("AR0" = congress_ar0, "AR1" = congress_ar1, "AR2" = congress_ar2, "MA1" = congress_ma1, "ARMA" = congress_arma), coefs = names(congress_arma$coef), statistics = c("N"="nobs", "sigma", "AIC"))
+
+RUN CV
+```
+
+
+
+
 c.  [10 points.] Now estimate a sixth model: an AR(1)AR(1)₃. Add this model to the two tables you made in part b.  How well does the new model do?  What model is best overall?  Can you provide a substantive rationale for using either an MA(1) or an AR(1)AR(1)₃ model to model the US Senate, but not the House?  
+
+```{r}
+congress_ar13 <- arima(congress$DemSenateMaj, order = c(1,0,0),
+                     seasonal = list(order = c(1,0,0), period = 3),
+                     xreg = xcovariates, include.mean = TRUE
+)
+
+huxreg(list("AR0" = congress_ar0, "AR1" = congress_ar1, "AR2" = congress_ar2, "MA1" = congress_ma1, "ARMA" = congress_arma, "AR13" = congress_ar13), coefs = names(congress_arma$coef), statistics = c("N"="nobs", "sigma", "AIC"))
+```
+
 
